@@ -1,0 +1,14 @@
+Business Sector	Claims 	 Min 	 Median 	 Mean 	 Max 
+Entertainment	1 	 73968 	 73968 	 73968 	 73968 
+Financial Services	15 	 0 	 72770 	 141249 	 809788 
+Gaming & Casino	2 	 80000 	 87275 	 87275 	 94550 
+Healthcare	25 	 2598 	 60563 	 1325777 	 15000000 
+Hospitality	6 	 30000 	 82724 	 195447 	 706000 
+Manufacturing	2 	 750 	 65967 	 65967 	 131184 
+Media	3 	 6000 	 55299 	 68596 	 144490 
+Non Profit	5 	 5900 	 35794 	 50112 	 101127 
+Professional Services	10 	 6704 	 29217 	 329845 	 2989966 
+Restaurant	5 	 4000 	 16212 	 75744 	 250000 
+Retail	12 	 91359 	 455488 	 1795266 	 8916432 
+Technology	11 	 0 	 90000 	 206532 	 641635 
+Other	15 	 708 	 61339 	 713133 	 6700142 

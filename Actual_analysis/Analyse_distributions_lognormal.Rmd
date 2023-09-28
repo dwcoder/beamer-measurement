@@ -1,0 +1,298 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(data.table)
+library(xtable)
+library(dplyr)
+library(ggplot2)
+
+plots_folder <- file.path("..", "beamer_presentation", "plots")
+data_folder <- 'data'
+
+mydata1 <- read.table(file=file.path(data_folder, "TableTotal_Costs_bysector_2013.txt"),
+                      sep="\t" ,
+                      header=TRUE ,
+                      as.is=TRUE )
+
+mydata2 <- read.table(file=file.path(data_folder,"TableTotal_Costs_bysector_2014.txt"),
+                      sep="," ,
+                      header=TRUE ,
+                      as.is=TRUE )
+
+mydata3 <- read.table(file=file.path(data_folder, "TableTotal_Costs_bysector_2015.txt"),
+                      sep="\t" ,
+                      header=TRUE ,
+                      as.is=TRUE )
+
+
+#mydata1$in.other.table <- mydata1$Business.Sector %in% mydata2$Business.Sector
+#mydata2$in.other.table <- mydata2$Business.Sector %in% mydata1$Business.Sector
+
+setDT(mydata1)
+setDT(mydata2)
+setDT(mydata3)
+
+
+mydata1$year <- 2013
+mydata2$year <- 2014
+mydata3$year <- 2015
+
+mydatajoined <-  rbind(mydata1, mydata2)
+
+# Now add the third sheet
+
+mydatajoined <- rbind(mydatajoined, mydata3)
+
+# Latex table for the presentation
+knitr::kable(mydatajoined, 'latex')
+```
+
+```{r}
+special_cases_2 <- mydatajoined[(Claims==2)]
+special_cases_1 <- mydatajoined[(Claims==1)]
+
+mydatajoined <- mydatajoined[(Claims>2)]
+
+# For the special cases, we have detailed information:
+
+special_cases_2[, Mean:=NULL]
+special_cases_2[, Median:=NULL]
+special_cases_1[, Mean:=NULL]
+special_cases_1[, Median:=NULL]
+special_cases_1[, Max:=NULL]
+special_cases_1[, Claims:=NULL]
+setnames(special_cases_1, "Min", "value")
+
+
+special_cases_2_melted <- melt(special_cases_2, id.vars = c("Business.Sector", "Claims", "year"))
+special_cases_2_melted[, variable:=NULL]
+special_cases_2_melted[, Claims:=NULL]
+
+special_cases <- rbind(special_cases_1, special_cases_2_melted)
+
+mylevels <- unique(c(special_cases$Business.Sector, mydatajoined$Business.Sector))
+
+mydatajoined[,Business.Sector:=factor(Business.Sector, levels=mylevels)]
+special_cases[,Business.Sector:=factor(Business.Sector, levels=mylevels)]
+
+
+
+```
+
+
+```{r}
+
+#### Need to update below to reflect year
+mydatajoined$Min[mydatajoined$Min==0] <- 1 #cannot have zero-valued claims
+
+
+sectornum <- unclass(mydatajoined$Business.Sector)
+numsectors <- max(sectornum)
+
+sectornum_special <- special_cases[,unclass(Business.Sector)]
+yearnum_special <- special_cases[, year-min(year)+1]
+y_special <-       special_cases[, value]
+
+mydatajoined[, yearnum := year-min(year)+1 ]
+
+library(rstan) # observe startup messages
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+num_chains <- 1
+
+setDF(mydatajoined)
+
+y <- as.matrix(mydatajoined[ c( "Min", "Median", "Max", "Claims" )])
+
+my_dat <- list(N = nrow(mydatajoined), 
+               y = y, 
+               groupnum=sectornum, 
+               n_groups=numsectors, 
+               yearnum=mydatajoined$yearnum, 
+               n_years=3,
+               
+               N_special = nrow(special_cases),
+               groupnum_special=sectornum_special,
+               yearnum_special=yearnum_special,
+               y_special=y_special
+               )
+
+starts <- function(chainnum) return(list(par_intercept=log(100000)))
+
+if(exists("fit")){
+  fit <- stan(file = 'stanmodel_lognormal.stan', 
+              fit=fit,  
+              data = my_dat,  
+              iter = 10000, 
+              chains=num_chains, 
+              init=starts, 
+              sample_file = "samples.csv")
+} else {
+  fit <- stan(file = 'stanmodel_lognormal.stan', 
+              data = my_dat,  
+              iter = 10000, 
+              chains=num_chains, 
+              init=starts, 
+              sample_file = "samples.csv")
+}
+
+data.frame(levels(sectornum))
+
+plot(fit, pars="par_group" )
+plot(fit, pars="par_year" )
+stan_dens(fit, pars=c("the_mean") )
+
+summary(fit, pars=c("the_mean"))
+
+# Things to say:
+# There is huge uncertainty around the mean.
+# This is not surprising, we only have XX claims
+# But we have already learned something about the relative risk for the different industries.
+# We can also use this for pricing, as long as we set the limits and deductibles appropriately
+
+# This is only severity data, they do not report the number of companies that were at risk when recording the claims.
+# However the same principles will hold for analysing the severity, we can use summary statistics.
+# This isn't a new idea, GLM book has a section on using Gamma distributions to analyse claims
+
+# Which value should we use as the parameter estimate?
+# MAP minimises 0-1 loss
+# Posterior mean minimises squared-error loss
+# Posterior median minimises absolute-error loss
+
+
+# Use this to make a table of parameters mu, sigma, mean, var
+# to use for pricing. Write a short app to calculate the 
+# insurance for a limit or a deductible.
+
+
+# Interesting to note: For the lognormal distribution, the arithmentic coefiecient of variation is independent of the mean
+# We can see this in our results
+# https://en.wikipedia.org/wiki/Log-normal_distribution#Arithmetic_coefficient_of_variation
+# Since we made the assumption that the coeficient of variation is the same, all our sigmas will also be the same
+
+```
+
+Rename the parameters
+```{r}
+
+fit2 <- fit
+names(fit2)[grepl("the_mu",names(fit2)) ] <- levels(sectornum)
+names(fit2)[grepl("the_sigma",names(fit2)) ] <- levels(sectornum)
+
+names(fit2)[grepl("par_group",names(fit2)) ] <- levels(sectornum)[1:14]
+names(fit2)[grepl("par_year",names(fit2)) ] <- c(2013,2014)
+
+
+themer <- theme(axis.text=element_text(size=25),axis.text.y=element_text(size=25))
+p1 <- plot(fit2, pars="par_group") + ggtitle('Industry parameter, Baseline = "Restaurant"') + themer
+p2 <- plot(fit2, pars="par_year") + ggtitle('Year parameter, Baseline = 2015') + themer
+
+p1
+p2
+
+{
+png(file.path(plots_folder, "sector_comparison.png"), width = 1920*0.45, height = 1080)
+plot(p1)
+dev.off()
+png(file.path(plots_folder, "year_comparison.png"), width = 1920/2, height = 1080/2)
+plot(p2)
+dev.off()
+}
+
+
+print(fit , probs = c(0.025, 0.5, 0.975),  pars=c("par_intercept", "par_year", "par_group", "cov_variation"))
+
+```
+
+
+
+```{r}
+
+
+cov_variation <-  summary(fit2, pars="cov_variation")[[1]][,"mean"]
+mus    <- summary(fit2, pars="the_mu")[[1]][,"mean"]
+sigmas <- summary(fit2, pars="the_sigma")[[1]][,"mean"]
+means <- summary(fit2, pars="the_mean")[[1]][,"mean"]
+
+knitr::kable(data.frame(mu=mus, sigma=sigmas, mean_claim=format(round(means), big.mark = "," , justify = "left")))
+
+
+makedist <- function(mu, sigma, knots=1000, limits_quantiles=c(0.01, 0.99)){
+  
+  limits_x <- qlnorm(limits_quantiles, mu, sigma)  
+  
+  x <- exp(seq(log(limits_x[1]), log(limits_x[2]), length.out = knots))
+  y <- dlnorm(x, mu, sigma)
+  
+  return(data.frame(x=x, y=y))
+}
+
+pp <- makedist(mus[1], sigmas[1], limits_quantiles = c(0.0001, 0.8))
+
+plotframe <- lapply( mus, function(x)  makedist(x, sigmas[1], limits_quantiles = c(0.0001, 0.995) ) )
+plotframe <- rbindlist(plotframe, idcol="sector")
+                 
+
+p <- ggplot(plotframe)
+p <- p + aes(x=x, y=y, color=sector)
+p <- p + geom_line()
+p <- p + ylab("Density") + xlab("Loss amount")
+p <- p + facet_grid(sector ~ ., scales="free_y")
+p <- p + scale_x_continuous(limits = c(0, 50e3))
+p <- p + theme( axis.ticks.y = element_blank(), 
+                axis.text.y = element_blank(), 
+                legend.position='none',
+                text=element_text(size=16),
+                strip.text.y = element_text(angle=0, size=14)
+                )
+p
+
+{
+png(file.path(plots_folder, "distplot.png"), width = 1920*0.8*0.7, height = 1080*0.7, pointsize=20)
+plot(p)
+dev.off()
+}
+
+```
+
+Price some insurance
+```{r}
+
+deductible <- 10e3
+limit <- 10e6
+  
+payout <- function(x, deductible, limit){
+  if (x < deductible)  return(0)
+  else if (deductible <= x & x < limit )  return(x - deductible)
+  else if (limit <= x )  return(limit - deductible )
+}
+
+payout <- Vectorize(payout, "x")
+
+montecarlo_expected_claim <- function(mu, sigma, N=10000, deductible=10e3, limit=10e6){
+
+  sim_claim <- rlnorm(N, mu, sigma)  
+  sim_payouts <- payout(sim_claim, deductible, limit)
+
+return(mean(sim_payouts))
+}
+
+
+param_dt <- data.table(data.frame(mu=mus, sigma=sigmas))
+param_dt[,  sector:= names(mus)]
+
+param_dt[, mean_payout:= NULL]
+param_dt[, mean_payout:= round(montecarlo_expected_claim(mu, sigma)),
+           by=.(sector)]
+
+param_dt[, claim_frequency:=0.1]
+param_dt[, premium:= mean_payout * claim_frequency ]
+
+knitr::kable(param_dt, "latex", digits = 2, format.args = list(big.mark=','))
+
+```
+
