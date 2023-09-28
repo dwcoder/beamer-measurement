@@ -1,0 +1,6 @@
+## `**/foo` matches pattern `foo` in all directories 
+#
+
+**/*.rda
+**/\.directory
+**/*.pdf
